@@ -1,0 +1,11 @@
+# J-Link Commander script: first-time / board-change hardware-ID write.
+# Flashes the CALIBRATION_MODE image built into build_cal/ ...
+# ... which programs Option Bytes DATA0 = HARDWARE_ID, then resets & boots.
+si SWD
+speed 4000
+device STM32F334R8
+connect
+loadfile build_cal/RM2024-SuperCap-F3-V1R.elf
+r
+g
+exit

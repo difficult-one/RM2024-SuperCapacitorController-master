@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=cd \"D:\\hanako\\supercapacitor\\RM2024-SuperCapacitorController-master/hardware/SuperCap2024_Control_V1.1R_F3_ISOPWR\" && for s in PA13 PA14 SWDIO SWCLK CANH CANL NRST VIN VBAT 24V PA11 PA12; do echo \"--- $s ---\"; rg -n \"$s\" SuperCap2024Control_V1.1R_F3_ISOPWR.kicad_sch | head -6; done 2>/dev/null | head -80"]

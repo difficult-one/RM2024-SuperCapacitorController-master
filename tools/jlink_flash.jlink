@@ -1,0 +1,11 @@
+# J-Link Commander script: download & run the normal firmware
+# Target: STM32F334R8 (SuperCap control board, via on-board / external J-Link, SWD)
+# Run from the repo root so that "build/..." resolves.
+si SWD
+speed 4000
+device STM32F334R8
+connect
+loadfile build/RM2024-SuperCap-F3-V1R.elf
+r
+g
+exit

@@ -1,0 +1,8 @@
+# J-Link Commander script: full-chip erase (also resets RDP protection to level 0).
+# DANGER: wipes ALL code/data on the STM32F334R8.
+si SWD
+speed 4000
+device STM32F334R8
+connect
+erase
+exit
