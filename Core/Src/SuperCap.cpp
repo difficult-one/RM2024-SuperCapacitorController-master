@@ -54,6 +54,8 @@ void init()
     if (hardwareID != (uint32_t)HARDWARE_ID)
     {
 #ifdef CALIBRATION_MODE
+        while (HAL_FLASH_Unlock() != HAL_OK)  // unlock main flash control register
+            __ASM volatile("bkpt ");
         while (HAL_FLASH_OB_Unlock() != HAL_OK)  // unlock flash option bytes
             __ASM volatile("bkpt ");
 

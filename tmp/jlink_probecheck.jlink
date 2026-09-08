@@ -1,0 +1,7 @@
+si SWD
+speed 100
+device STM32F334R8
+connect
+mem32 0xE000ED00 1
+mem32 0x1FFFF800 4
+exit

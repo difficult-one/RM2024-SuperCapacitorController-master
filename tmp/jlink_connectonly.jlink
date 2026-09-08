@@ -1,0 +1,5 @@
+si SWD
+speed 100
+device STM32F334R8
+connect
+exit
