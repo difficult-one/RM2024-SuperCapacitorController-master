@@ -1,7 +1,7 @@
-# J-Link Commander script: read the Option Bytes region (RDP / USER / DATA0 / DATA1).
-# On STM32F3 the option bytes live at 0x1FFFF800:
-#   0x1FFFF800 RDP, 0x1FFFF802 USER, 0x1FFFF804 DATA0(=HARDWARE_ID), 0x1FFFF806 DATA1
-# An erased/fresh DATA0 reads 0xFF (no hardware ID programmed yet).
+// J-Link Commander script: read the Option Bytes region (RDP / USER / DATA0 / DATA1).
+// On STM32F3 the option bytes live at 0x1FFFF800:
+//   0x1FFFF800 RDP, 0x1FFFF802 USER, 0x1FFFF804 DATA0(=HARDWARE_ID), 0x1FFFF806 DATA1
+// An erased/fresh DATA0 reads 0xFF (no hardware ID programmed yet).
 si SWD
 speed 4000
 device STM32F334R8

@@ -1,6 +1,6 @@
-# J-Link Commander script: first-time / board-change hardware-ID write.
-# Flashes the CALIBRATION_MODE image built into build_cal/ ...
-# ... which programs Option Bytes DATA0 = HARDWARE_ID, then resets & boots.
+// J-Link Commander script: first-time / board-change hardware-ID write.
+// Flashes the CALIBRATION_MODE image built into build_cal/ ...
+// ... which programs Option Bytes DATA0 = HARDWARE_ID, then resets & boots.
 si SWD
 speed 4000
 device STM32F334R8
