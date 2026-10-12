@@ -599,7 +599,11 @@ powerManagerInit:
 
     TimerManager::HRTIMDisableOutput();
 
+    const uint32_t initPrimask = __get_PRIMASK();
+    __disable_irq();
+    ControlData::controlData.outputReady = false;
     ControlData::controlData.enableOutput = false;
+    __set_PRIMASK(initPrimask);
 
     SampleManager::ADCCalibrate();
     SampleManager::ADCDMAStart();
@@ -618,9 +622,13 @@ powerManagerInit:
 
     /* No autonomous cold-start output. Hardware checks plus a fresh accepted
      * enable request are both required; periodic frames retain fault latches. */
+    const uint32_t readyPrimask = __get_PRIMASK();
+    __disable_irq();
+    ControlData::controlData.outputReady = true;
     ControlData::controlData.enableOutput = ControlData::controlData.lastCommandEnabled &&
         InputPowerPolicy::commandFresh(ControlData::controlData.hasCommand, HAL_GetTick(),
             ControlData::controlData.lastCommandTickMs) && Status::status.errorCode == 0;
+    __set_PRIMASK(readyPrimask);
 #endif
 }
 
@@ -691,44 +699,15 @@ static inline void updateVIP()
     {
         float tempVASide = SampleManager::ProcessedData::processedData.vASide;
 
-        float absIA        = M_MIN(M_ABS(SampleManager::ProcessedData::processedData.iASide), 0.1f);
-        float absIB        = M_MIN(M_ABS(SampleManager::ProcessedData::processedData.iBSide), 0.1f);
-        float actualIAtoIB = absIA / absIB;
-
         pidPowerReferee.update(tempData.targetRefereePower, SampleManager::ProcessedData::processedData.pReferee);
 
         tempData.targetAPower += pidPowerReferee.getDeltaOutput();
 
-        float tempCapOutILimit;
-        float tempCapInILimit        = I_LIMIT;
-        constexpr float MIN_CAP_IOUT = 0.1f;
-        constexpr float MAX_CAP_IOUT = I_LIMIT;
-        constexpr float CAP_V_CUTOFF = 5.0f;
-        constexpr float CAP_V_NORMAL = 12.0f;
-        if (SampleManager::ProcessedData::processedData.vBSide < CAP_V_CUTOFF)
-        {
-            tempCapOutILimit = MIN_CAP_IOUT;
-            tempCapInILimit  = 4.0f;
-        }
-        else if (SampleManager::ProcessedData::processedData.vBSide > CAP_V_NORMAL)
-        {
-            tempCapOutILimit = MAX_CAP_IOUT;
-        }
-        else
-        {
-            tempCapOutILimit = MIN_CAP_IOUT + (MAX_CAP_IOUT - MIN_CAP_IOUT) * (SampleManager::ProcessedData::processedData.vBSide - CAP_V_CUTOFF) /
-                                                  (CAP_V_NORMAL - CAP_V_CUTOFF);
-            tempCapOutILimit = M_CLAMP(tempCapOutILimit, MIN_CAP_IOUT, MAX_CAP_IOUT);
-        }
-
-        float powerALimitNegativeBoundByA = -1 * I_LIMIT * tempVASide;
-        float powerALimitPositiveBoundByA = I_LIMIT * tempVASide;
-
-        float powerALimitNegativeBoundByB = -1 * tempCapOutILimit * tempVASide * actualIAtoIB;
-        float powerALimitPositiveBoundByB = tempCapInILimit * tempVASide * actualIAtoIB;
-
-        float powerLimitAToB = M_MIN(powerALimitPositiveBoundByA, powerALimitPositiveBoundByB);
-        float powerLimitBToA = M_MAX(powerALimitNegativeBoundByA, powerALimitNegativeBoundByB);
+        const auto limits = InputPowerPolicy::capacitorPowerLimits(tempVASide,
+            SampleManager::ProcessedData::processedData.vBSide,
+            SampleManager::ProcessedData::processedData.efficiency, I_LIMIT);
+        const float powerLimitAToB = limits.charge_w;
+        const float powerLimitBToA = -limits.discharge_w;
 
         if (tempData.targetAPower < powerLimitBToA)
         {
@@ -826,10 +805,12 @@ static inline void updateStatus()
     Status::status.chassisPower = -SampleManager::ProcessedData::processedData.iASide * SampleManager::ProcessedData::processedData.vASide +
                                   SampleManager::ProcessedData::processedData.pReferee;
 
-    if (SampleManager::ProcessedData::processedData.vBSide > SampleManager::ProcessedData::processedData.vASide)
-        Status::status.chassisPowerLimit = tempData.baseRefereePower + SampleManager::ProcessedData::processedData.vASide * I_LIMIT * 0.8f;
-    else
-        Status::status.chassisPowerLimit = tempData.baseRefereePower + SampleManager::ProcessedData::processedData.vBSide * I_LIMIT * 0.8f;
+    const auto limits = InputPowerPolicy::capacitorPowerLimits(
+        SampleManager::ProcessedData::processedData.vASide,
+        SampleManager::ProcessedData::processedData.vBSide,
+        SampleManager::ProcessedData::processedData.efficiency, I_LIMIT);
+    Status::status.chassisPowerLimit = std::fmax(0.0f, tempData.targetRefereePower) +
+        limits.discharge_w;
 
     if (Status::status.communicationTimeoutCnt++ >= 500)
     {
@@ -877,8 +858,22 @@ static inline void updateStatus()
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
 }
 
-void updateEnergy()
+void updateEnergy(bool inputModeChanged)
 {
+    if (inputModeChanged)
+    {
+        pidPowerReferee.reset();
+        pidEnergyReferee.reset();
+        tempData.lastRefereePowerLimit = ControlData::controlData.refereePowerLimit;
+        if (!ControlData::controlData.inputControlEnabled)
+        {
+            tempData.baseRefereePower = InputPowerPolicy::legacyTransitionTarget(
+                ControlData::controlData.refereePowerLimit, tempData.targetRefereePower);
+            tempData.targetRefereePower = tempData.baseRefereePower;
+            Status::status.communicationTimeoutCnt = 0;
+            return;
+        }
+    }
     if (ControlData::controlData.inputControlEnabled)
     {
         if (tempData.lastRefereePowerLimit != ControlData::controlData.refereePowerLimit)

@@ -89,6 +89,7 @@ struct ControlData
     float refereePowerLimit;
     float energyRemain;
     bool enableOutput;
+    bool outputReady = false;
     bool inputControlEnabled = false;
     float inputPowerTarget = 0;
     bool hasCommand = false;
@@ -122,7 +123,7 @@ struct Status
 
 void init();
 
-void updateEnergy();
+void updateEnergy(bool inputModeChanged = false);
 
 void systemRestart();
 

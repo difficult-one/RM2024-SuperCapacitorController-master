@@ -127,6 +127,7 @@ extern "C"
                      * caller's interrupt mask rather than blindly enabling. */
                     const uint32_t previousPrimask = __get_PRIMASK();
                     __disable_irq();
+                    const bool inputModeChanged = control.inputControlEnabled != command.extended;
                     control.refereePowerLimit = command.referee_limit_w;
                     control.energyRemain = command.buffer_energy_j;
                     const bool sourceWasFresh = InputPowerPolicy::commandFresh(
@@ -134,7 +135,8 @@ extern "C"
                     if (!command.enabled || !control.lastCommandEnabled || !sourceWasFresh)
                         control.enableOutput = InputPowerPolicy::nextOutputEnable(
                             control.enableOutput, control.lastCommandEnabled, command.enabled,
-                            sourceWasFresh, PowerManager::Status::status.errorCode != 0);
+                            sourceWasFresh, PowerManager::Status::status.errorCode != 0,
+                            control.outputReady);
                     control.lastCommandEnabled = command.enabled;
                     control.inputControlEnabled = command.extended;
                     control.inputPowerTarget = command.target_input_w;
@@ -142,7 +144,7 @@ extern "C"
                     control.lastCommandTickMs = HAL_GetTick();
                     __set_PRIMASK(previousPrimask);
 
-                    PowerManager::updateEnergy();
+                    PowerManager::updateEnergy(inputModeChanged);
                 }
         }
     }

@@ -21,8 +21,11 @@ inline bool commandFresh(bool received, uint32_t now, uint32_t last)
 }
 
 inline bool nextOutputEnable(bool current, bool lastRequested, bool requested,
-                             bool sourceWasFresh, bool hardwareFault)
+                             bool sourceWasFresh, bool hardwareFault,
+                             bool outputReady = true)
 {
+    if (!outputReady)
+        return false;
     if (!requested)
         return false;
     if (!lastRequested)
@@ -61,6 +64,40 @@ inline float boundTarget(float referee, float energy, float requested)
     const float extra = std::fmin(60.0f, std::fmax(0.0f, (energy - 15.0f) / 0.5f));
     const float ceiling = energy <= 5.0f ? std::fmax(0.0f, referee - 20.0f) : referee + extra;
     return std::fmax(0.0f, std::fmin(requested, ceiling));
+}
+
+inline float legacyTransitionTarget(float referee, float previous)
+{
+    if (!finite(referee) || !finite(previous))
+        return 0;
+    return std::fmax(0.0f, std::fmin(referee, previous));
+}
+
+struct CapacitorPowerLimits
+{
+    float charge_w = 0;
+    float discharge_w = 0;
+};
+
+inline CapacitorPowerLimits capacitorPowerLimits(float busVoltage, float capVoltage,
+                                                  float efficiency, float currentLimit)
+{
+    CapacitorPowerLimits result;
+    if (!finite(busVoltage) || !finite(capVoltage) || !finite(efficiency) ||
+        !finite(currentLimit) || busVoltage <= 0 || capVoltage <= 0 || currentLimit <= 0)
+        return result;
+    const float chargeCurrent = capVoltage < 5.0f ? 4.0f : currentLimit;
+    const float dischargeCurrent = capVoltage < 5.0f ? 0.1f :
+        (capVoltage >= 12.0f ? currentLimit :
+            0.1f + (currentLimit - 0.1f) * (capVoltage - 5.0f) / 7.0f);
+    const float busPowerLimit = busVoltage * currentLimit;
+    /* Charging: PB <= PA, so PA <= VB * IBmax is conservative even at zero
+     * current. Do not divide measured currents or assume lossless conversion.
+     * Discharging: delivered PA <= PB * efficiency, with 20% reserve. */
+    result.charge_w = std::fmin(busPowerLimit, capVoltage * chargeCurrent);
+    result.discharge_w = std::fmin(busPowerLimit, capVoltage * dischargeCurrent *
+        std::fmax(0.0f, std::fmin(1.0f, efficiency)) * 0.8f);
+    return result;
 }
 
 inline bool decode(const uint8_t *data, uint8_t length, Command &result)
