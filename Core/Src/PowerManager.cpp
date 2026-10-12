@@ -1,4 +1,5 @@
 #include "PowerManager.hpp"
+#include "InputPowerPolicy.hpp"
 
 namespace PowerManager
 {
@@ -615,7 +616,11 @@ powerManagerInit:
     if (!ErrorChecker::checkHardwareError())
         goto powerManagerInit;
 
-    ControlData::controlData.enableOutput = true;
+    /* No autonomous cold-start output. Hardware checks plus a fresh accepted
+     * enable request are both required; periodic frames retain fault latches. */
+    ControlData::controlData.enableOutput = ControlData::controlData.lastCommandEnabled &&
+        InputPowerPolicy::commandFresh(ControlData::controlData.hasCommand, HAL_GetTick(),
+            ControlData::controlData.lastCommandTickMs) && Status::status.errorCode == 0;
 #endif
 }
 
@@ -798,6 +803,20 @@ static inline void updateVIP()
 
 static inline void updateStatus()
 {
+    if (ControlData::controlData.hasCommand &&
+        !InputPowerPolicy::commandFresh(true, HAL_GetTick(),
+            ControlData::controlData.lastCommandTickMs))
+    {
+        ControlData::controlData.hasCommand = false;
+        ControlData::controlData.enableOutput = false;
+        ControlData::controlData.inputControlEnabled = false;
+        ControlData::controlData.energyRemain = 0;
+        tempData.baseRefereePower = tempData.targetRefereePower = 0;
+        TimerManager::HRTIMDisableOutput();
+        pidEnergyReferee.reset();
+        pidPowerReferee.reset();
+    }
+    Status::status.inputPowerTarget = tempData.targetRefereePower;
     Status::status.realVBToVA = SampleManager::ProcessedData::processedData.vBSide / SampleManager::ProcessedData::processedData.vASide;
 
     Status::status.outputEnabled = TimerManager::getHRTIMOutputState();
@@ -814,7 +833,7 @@ static inline void updateStatus()
 
     if (Status::status.communicationTimeoutCnt++ >= 500)
     {
-        ControlData::controlData.energyRemain      = ENERGY_BUFFER;
+        ControlData::controlData.energyRemain      = 0;
         ControlData::controlData.refereePowerLimit = DEFAULT_REFEREE_POWER;
         tempData.baseRefereePower                  = DEFAULT_REFEREE_POWER;
         tempData.targetRefereePower                = DEFAULT_REFEREE_POWER;
@@ -860,6 +879,21 @@ static inline void updateStatus()
 
 void updateEnergy()
 {
+    if (ControlData::controlData.inputControlEnabled)
+    {
+        if (tempData.lastRefereePowerLimit != ControlData::controlData.refereePowerLimit)
+        {
+            tempData.lastRefereePowerLimit = ControlData::controlData.refereePowerLimit;
+            pidPowerReferee.reset();
+        }
+        tempData.baseRefereePower = InputPowerPolicy::boundTarget(
+            ControlData::controlData.refereePowerLimit, ControlData::controlData.energyRemain,
+            ControlData::controlData.inputPowerTarget);
+        tempData.targetRefereePower = tempData.baseRefereePower;
+        Status::status.communicationTimeoutCnt = 0;
+        pidEnergyReferee.reset();
+        return;
+    }
     if (tempData.lastRefereePowerLimit != ControlData::controlData.refereePowerLimit)
     {
         tempData.lastRefereePowerLimit = ControlData::controlData.refereePowerLimit;

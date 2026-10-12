@@ -2,6 +2,7 @@
 
 #include "MathUtil.hpp"
 #include "PowerManager.hpp"
+#include "InputPowerPolicy.hpp"
 #include "can.h"
 
 namespace Communication
@@ -61,6 +62,11 @@ static CAN_TxHeaderTypeDef txHeader = {
 
 void feedbackPowerData()
 {
+    static uint32_t lastFeedbackTickMs = 0;
+    const uint32_t now = HAL_GetTick();
+    if (!InputPowerPolicy::feedbackDue(now, lastFeedbackTickMs))
+        return;
+    lastFeedbackTickMs = now;
     txData.errorCode         = PowerManager::Status::status.errorCode | ((uint8_t)!PowerManager::Status::status.outputEnabled) << 7;
     txData.chassisPower      = PowerManager::Status::status.chassisPower;
     txData.chassisPowerLimit = PowerManager::Status::status.chassisPowerLimit;
@@ -77,6 +83,25 @@ void feedbackPowerData()
               ((uint32_t)(((uint8_t *)&txData)[3]) << CAN_TDL0R_DATA3_Pos) | ((uint32_t)(((uint8_t *)&txData)[2]) << CAN_TDL0R_DATA2_Pos) |
                   ((uint32_t)(((uint8_t *)&txData)[1]) << CAN_TDL0R_DATA1_Pos) | ((uint32_t)(((uint8_t *)&txData)[0]) << CAN_TDL0R_DATA0_Pos));
     SET_BIT(hcan.Instance->sTxMailBox[CAN_TX_MAILBOX0].TIR, CAN_TI0R_TXRQ);
+
+    uint8_t inputFrame[8];
+    const auto &control = PowerManager::ControlData::controlData;
+    const bool active = control.inputControlEnabled && control.hasCommand &&
+        control.enableOutput && PowerManager::Status::status.outputEnabled &&
+        PowerManager::Status::status.errorCode == 0;
+    if ((READ_REG(hcan.Instance->TSR) & CAN_TSR_TME1) != 0U &&
+        InputPowerPolicy::encodeFeedback(PowerManager::SampleManager::ProcessedData::processedData.pReferee,
+            PowerManager::Status::status.inputPowerTarget, active, inputFrame))
+    {
+        hcan.Instance->sTxMailBox[CAN_TX_MAILBOX1].TIR = 0x052U << CAN_TI0R_STID_Pos;
+        hcan.Instance->sTxMailBox[CAN_TX_MAILBOX1].TDTR = 8;
+        uint32_t low, high;
+        std::memcpy(&low, inputFrame, sizeof(low));
+        std::memcpy(&high, inputFrame + 4, sizeof(high));
+        hcan.Instance->sTxMailBox[CAN_TX_MAILBOX1].TDLR = low;
+        hcan.Instance->sTxMailBox[CAN_TX_MAILBOX1].TDHR = high;
+        SET_BIT(hcan.Instance->sTxMailBox[CAN_TX_MAILBOX1].TIR, CAN_TI0R_TXRQ);
+    }
 }
 
 CAN_RxHeaderTypeDef rxHeader;
@@ -90,19 +115,32 @@ extern "C"
             while (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &rxHeader, (uint8_t *)&rxData) == HAL_OK)
                 if ((rxHeader.StdId == 0x061) && (rxHeader.DLC == 8) && (rxHeader.IDE == CAN_ID_STD))
                 {
-                    static bool lastEnableDCDC = true;
-
-                    if (rxData.systemRestart)
+                    InputPowerPolicy::Command command;
+                    if (!InputPowerPolicy::decode(reinterpret_cast<const uint8_t *>(&rxData), 8, command))
+                        continue;
+                    if (command.restart)
                         PowerManager::systemRestart();
 
-                    PowerManager::ControlData::controlData.refereePowerLimit = M_CLAMP(rxData.feedbackRefereePowerLimit, 30.0f, 250.0f);
-                    PowerManager::ControlData::controlData.energyRemain      = M_CLAMP(rxData.feedbackRefereeEnergyBuffer, 0.0f, 300.0f);
-
-                    if (rxData.enableDCDC == false || rxData.feedbackRefereePowerLimit > 250.0f)
-                        PowerManager::ControlData::controlData.enableOutput = false;
-                    else if (lastEnableDCDC == false)
-                        PowerManager::ControlData::controlData.enableOutput = true;
-                    lastEnableDCDC = rxData.enableDCDC;
+                    auto &control = PowerManager::ControlData::controlData;
+                    /* TIM2/HRTIM can latch a fault at higher IRQ priority.
+                     * Keep the command transition atomic, restoring the
+                     * caller's interrupt mask rather than blindly enabling. */
+                    const uint32_t previousPrimask = __get_PRIMASK();
+                    __disable_irq();
+                    control.refereePowerLimit = command.referee_limit_w;
+                    control.energyRemain = command.buffer_energy_j;
+                    const bool sourceWasFresh = InputPowerPolicy::commandFresh(
+                        control.hasCommand, HAL_GetTick(), control.lastCommandTickMs);
+                    if (!command.enabled || !control.lastCommandEnabled || !sourceWasFresh)
+                        control.enableOutput = InputPowerPolicy::nextOutputEnable(
+                            control.enableOutput, control.lastCommandEnabled, command.enabled,
+                            sourceWasFresh, PowerManager::Status::status.errorCode != 0);
+                    control.lastCommandEnabled = command.enabled;
+                    control.inputControlEnabled = command.extended;
+                    control.inputPowerTarget = command.target_input_w;
+                    control.hasCommand = true;
+                    control.lastCommandTickMs = HAL_GetTick();
+                    __set_PRIMASK(previousPrimask);
 
                     PowerManager::updateEnergy();
                 }

@@ -89,6 +89,11 @@ struct ControlData
     float refereePowerLimit;
     float energyRemain;
     bool enableOutput;
+    bool inputControlEnabled = false;
+    float inputPowerTarget = 0;
+    bool hasCommand = false;
+    bool lastCommandEnabled = false;
+    uint32_t lastCommandTickMs = 0;
 
     static ControlData controlData;
 
@@ -103,6 +108,7 @@ struct Status
     float capEnergy;
     float chassisPower;
     float chassisPowerLimit;
+    float inputPowerTarget = 0;
     bool lowBattery;
     float realVBToVA;
 
